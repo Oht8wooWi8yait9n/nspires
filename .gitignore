@@ -1,0 +1,12 @@
+# NSPIRES Cache
+.nspires_cache/raw/
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+*.egg-info/
+.pytest_cache/

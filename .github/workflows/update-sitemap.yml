@@ -1,0 +1,42 @@
+name: Update NSPIRES Solicitations & Sitemap
+
+on:
+  schedule:
+    # Run every Sunday at midnight UTC
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  update-solicitations:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run NSPIRES Harvester & Site Generator
+        run: |
+          python3 generate_nspires_sitemap.py
+
+      - name: Commit and Push Changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add solicitations/ nspires_sitemap.xml nspires_urls.txt nspires_direct_sitemap.xml nspires_direct_urls.txt nspires_solicitations.jsonl index.html .nspires_cache/discovered_solicitations.json
+          if git diff --staged --quiet; then
+            echo "No changes detected. Skipping commit."
+          else
+            git commit -m "chore(auto): weekly update of NSPIRES solicitations and sitemap [skip ci]"
+            git push origin main
+          fi
