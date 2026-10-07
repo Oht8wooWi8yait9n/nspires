@@ -361,12 +361,6 @@ def render_html_page(sol: dict) -> str:
   <meta property="og:title" content="{title} - NASA NSPIRES">
   <meta property="og:description" content="Solicitation {sol_no} ({ann_type}) under {dir_name}. Status: {status}.">
   <meta property="og:site_name" content="NASA NSPIRES">
-  <script>
-    // Seamlessly forward human visitors directly to the official NASA NSPIRES live page
-    if (!navigator.webdriver && !/bot|crawl|spider|slurp|facebookexternalhit/i.test(navigator.userAgent)) {{
-      window.location.replace("{raw_live_url}");
-    }}
-  </script>
   <style>
     :root {{
       --nasa-blue: #0b3d91;
@@ -667,6 +661,10 @@ def generate_sitemaps(solicitations: list):
     with open(SITEMAP_FILE, "w", encoding="utf-8") as f:
         f.write("\n".join(lines_mirror) + "\n")
     print(f"[+] Wrote {SITEMAP_FILE} ({len(solicitations)} solicitations + root)")
+
+    std_sitemap = os.path.join(REPO_DIR, "sitemap.xml")
+    with open(std_sitemap, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines_mirror) + "\n")
 
     with open(URLS_FILE, "w", encoding="utf-8") as f:
         f.write("\n".join(mirror_urls) + "\n")
