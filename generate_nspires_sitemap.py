@@ -113,6 +113,15 @@ def discover_all_solicitations() -> list:
     }
     raw = make_request(JSON_API_URL, data=payload, headers=headers)
     if not raw:
+        if os.path.exists(DISCOVERED_CACHE):
+            try:
+                with open(DISCOVERED_CACHE, "r", encoding="utf-8") as f:
+                    cached = json.load(f)
+                if cached and len(cached) > 1000:
+                    print(f"[+] Network unavailable; falling back to {len(cached)} solicitations from cache ({DISCOVERED_CACHE})")
+                    return cached
+            except Exception:
+                pass
         print("[!] Failed to fetch solicitation JSON!", file=sys.stderr)
         return []
         
@@ -601,23 +610,55 @@ def render_html_page(sol: dict) -> str:
 """
 
 
+def load_existing_lastmod(sitemap_path: str) -> dict:
+    """Load existing URL -> lastmod mappings to prevent unnecessary diff churn."""
+    mapping = {}
+    if os.path.exists(sitemap_path):
+        try:
+            with open(sitemap_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            for m in re.finditer(r'<loc>(.*?)</loc>\s*<lastmod>(.*?)</lastmod>', content):
+                mapping[m.group(1).strip()] = m.group(2).strip()
+        except Exception:
+            pass
+    return mapping
+
+
+def write_if_changed(path: str, content: str) -> bool:
+    """Write content to path only if changed to avoid updating mtimes and git diffs."""
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                if f.read() == content:
+                    return False
+        except Exception:
+            pass
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
+    return True
+
+
 def generate_sitemaps(solicitations: list):
     """Generate primary XML sitemap, direct live XML sitemap, and text URL lists."""
     print("[*] Generating XML sitemaps and plain text URL lists...")
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
+    existing_mirror_lastmod = load_existing_lastmod(SITEMAP_FILE)
+    existing_direct_lastmod = load_existing_lastmod(DIRECT_SITEMAP_FILE)
+
     # 1. Primary GitHub Pages Sitemap (Clean extensionless URLs)
+    root_url = f"{GH_PAGES_BASE}/"
     lines_mirror = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
         '  <url>',
-        f'    <loc>{GH_PAGES_BASE}/</loc>',
-        f'    <lastmod>{today}</lastmod>',
+        f'    <loc>{root_url}</loc>',
+        f'    <lastmod>{existing_mirror_lastmod.get(root_url, today)}</lastmod>',
         '    <changefreq>daily</changefreq>',
         '    <priority>1.0</priority>',
         '  </url>'
     ]
-    mirror_urls = [f"{GH_PAGES_BASE}/"]
+    mirror_urls = [root_url]
 
     # 2. Direct NASA Live Sitemap
     lines_direct = [
@@ -639,9 +680,12 @@ def generate_sitemaps(solicitations: list):
             freq = "monthly"
             prio = "0.7"
             
+        m_lastmod = existing_mirror_lastmod.get(m_url, today)
+        d_lastmod = existing_direct_lastmod.get(d_url, today)
+
         lines_mirror.append('  <url>')
         lines_mirror.append(f'    <loc>{m_url}</loc>')
-        lines_mirror.append(f'    <lastmod>{today}</lastmod>')
+        lines_mirror.append(f'    <lastmod>{m_lastmod}</lastmod>')
         lines_mirror.append(f'    <changefreq>{freq}</changefreq>')
         lines_mirror.append(f'    <priority>{prio}</priority>')
         lines_mirror.append('  </url>')
@@ -649,7 +693,7 @@ def generate_sitemaps(solicitations: list):
 
         lines_direct.append('  <url>')
         lines_direct.append(f'    <loc>{escape(d_url)}</loc>')
-        lines_direct.append(f'    <lastmod>{today}</lastmod>')
+        lines_direct.append(f'    <lastmod>{d_lastmod}</lastmod>')
         lines_direct.append(f'    <changefreq>{freq}</changefreq>')
         lines_direct.append(f'    <priority>{prio}</priority>')
         lines_direct.append('  </url>')
@@ -658,25 +702,27 @@ def generate_sitemaps(solicitations: list):
     lines_mirror.append('</urlset>')
     lines_direct.append('</urlset>')
 
-    with open(SITEMAP_FILE, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines_mirror) + "\n")
+    mirror_xml = "\n".join(lines_mirror) + "\n"
+    direct_xml = "\n".join(lines_direct) + "\n"
+    mirror_txt = "\n".join(mirror_urls) + "\n"
+    direct_txt = "\n".join(direct_urls) + "\n"
+
+    write_if_changed(SITEMAP_FILE, mirror_xml)
     print(f"[+] Wrote {SITEMAP_FILE} ({len(solicitations)} solicitations + root)")
 
-    std_sitemap = os.path.join(REPO_DIR, "sitemap.xml")
-    with open(std_sitemap, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines_mirror) + "\n")
+    std_sitemap = os.path.join(BASE_DIR, "sitemap.xml")
+    write_if_changed(std_sitemap, mirror_xml)
+    print(f"[+] Wrote {std_sitemap}")
 
-    with open(URLS_FILE, "w", encoding="utf-8") as f:
-        f.write("\n".join(mirror_urls) + "\n")
+    write_if_changed(URLS_FILE, mirror_txt)
     print(f"[+] Wrote {URLS_FILE} ({len(mirror_urls)} URLs)")
 
-    with open(DIRECT_SITEMAP_FILE, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines_direct) + "\n")
+    write_if_changed(DIRECT_SITEMAP_FILE, direct_xml)
     print(f"[+] Wrote {DIRECT_SITEMAP_FILE} ({len(solicitations)} URLs)")
 
-    with open(DIRECT_URLS_FILE, "w", encoding="utf-8") as f:
-        f.write("\n".join(direct_urls) + "\n")
+    write_if_changed(DIRECT_URLS_FILE, direct_txt)
     print(f"[+] Wrote {DIRECT_URLS_FILE} ({len(direct_urls)} URLs)")
+
 
 
 def generate_index_html(solicitations: list):
@@ -999,8 +1045,7 @@ def generate_index_html(solicitations: list):
 </body>
 </html>
 """
-    with open(INDEX_HTML, "w", encoding="utf-8") as f:
-        f.write(index_content)
+    write_if_changed(INDEX_HTML, index_content)
     print(f"[+] Wrote {INDEX_HTML}")
 
 
@@ -1071,13 +1116,13 @@ def main():
                 except Exception as e:
                     print(f"[!] Error processing solicitation: {e}", file=sys.stderr)
 
-    # Sort all by release date descending
+    # Sort deterministically: clean_sid ascending, then release date descending
+    enriched_solicitations.sort(key=lambda x: str(x.get("clean_sid") or ""))
     enriched_solicitations.sort(key=lambda x: str(x.get("release_date") or ""), reverse=True)
 
     # 4. Save JSON Lines dataset
-    with open(JSONL_FILE, "w", encoding="utf-8") as f:
-        for sol in enriched_solicitations:
-            f.write(json.dumps(sol) + "\n")
+    jsonl_content = "".join(json.dumps(sol) + "\n" for sol in enriched_solicitations)
+    write_if_changed(JSONL_FILE, jsonl_content)
     print(f"[+] Wrote {JSONL_FILE} with {len(enriched_solicitations)} solicitation records.")
 
     # 5. Generate dual XML sitemaps and plain text lists
