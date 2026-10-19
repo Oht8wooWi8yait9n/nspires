@@ -618,7 +618,10 @@ def load_existing_lastmod(sitemap_path: str) -> dict:
             with open(sitemap_path, "r", encoding="utf-8") as f:
                 content = f.read()
             for m in re.finditer(r'<loc>(.*?)</loc>\s*<lastmod>(.*?)</lastmod>', content):
-                mapping[m.group(1).strip()] = m.group(2).strip()
+                raw_loc = m.group(1).strip()
+                lmod = m.group(2).strip()
+                mapping[raw_loc] = lmod
+                mapping[html.unescape(raw_loc)] = lmod
         except Exception:
             pass
     return mapping
